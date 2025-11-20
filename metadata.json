@@ -1,0 +1,5 @@
+{
+  "name": "TubeForge AI",
+  "description": "A high-performance, AI-enhanced YouTube downloader interface inspired by yt-dlp mechanics.",
+  "requestFramePermissions": []
+}
