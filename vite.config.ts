@@ -7,9 +7,6 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react()],
-    define: {
-      // Polyfill process.env for the Google GenAI SDK and standard usage
-      'process.env.API_KEY': JSON.stringify(env.API_KEY)
-    }
+    // No API Key needed for Lite version
   };
 });

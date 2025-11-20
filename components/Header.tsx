@@ -10,8 +10,8 @@ export const Header: React.FC = () => {
             <Zap className="w-6 h-6 text-brand-400" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-100 tracking-tight">TubeForge <span className="text-brand-400">AI</span></h1>
-            <p className="text-xs text-slate-500 font-mono">YT-DLP GUI WRAPPER</p>
+            <h1 className="text-xl font-bold text-slate-100 tracking-tight">TubeForge <span className="text-brand-400">Lite</span></h1>
+            <p className="text-xs text-slate-500 font-mono">NO-KEY YT DOWNLOADER</p>
           </div>
         </div>
         <div className="flex items-center gap-4 text-xs font-medium text-slate-400">
@@ -19,7 +19,7 @@ export const Header: React.FC = () => {
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
             Secure
           </span>
-           <span className="hidden sm:block text-slate-600">v2.5.0-flash</span>
+           <span className="hidden sm:block text-slate-600">v1.0.0-lite</span>
         </div>
       </div>
     </header>

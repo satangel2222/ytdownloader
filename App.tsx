@@ -37,15 +37,15 @@ export default function App() {
 
     setAppState(AppState.ANALYZING);
     setLogs([]);
-    addLog(`Connecting to YouTube API...`, 'info');
+    addLog(`Connecting to Public Metadata API...`, 'info');
     addLog(`Resolving video ID: ${videoId}`, 'info');
     
     // Simulate network delay
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 500));
     
     const thumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
     addLog('Thumbnail resource located', 'success');
-    addLog('Initializing AI analysis module...', 'warning');
+    addLog('Fetching video details...', 'info');
 
     const aiData = await analyzeVideoContent(videoId, url);
     
@@ -168,7 +168,7 @@ export default function App() {
                 {appState === AppState.ANALYZING ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Analyzing
+                    Checking
                   </>
                 ) : (
                   <>
