@@ -29,5 +29,6 @@ export enum AppState {
   READY,
   DOWNLOADING,
   COMPLETED,
-  ERROR
+  ERROR,
+  CLI_FALLBACK
 }

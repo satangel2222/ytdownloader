@@ -4,7 +4,7 @@ import { VideoCard } from './components/VideoCard';
 import { TerminalLog } from './components/TerminalLog';
 import { analyzeVideoContent } from './services/geminiService';
 import { VideoMetadata, VideoQuality, LogEntry, AppState } from './types';
-import { Download, Search, Loader2, Film, Server, AlertCircle } from 'lucide-react';
+import { Download, Search, Loader2, Film, Server, AlertCircle, Terminal, Copy, Check } from 'lucide-react';
 
 // Expanded list of public Cobalt instances (Mixed regions for better availability)
 const COBALT_INSTANCES = [
@@ -33,6 +33,7 @@ export default function App() {
   const [quality, setQuality] = useState<VideoQuality>(VideoQuality.Q1080);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState(0);
+  const [copied, setCopied] = useState(false);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const now = new Date();
@@ -77,6 +78,40 @@ export default function App() {
 
     addLog('Metadata extraction complete', 'success');
     setAppState(AppState.READY);
+  };
+
+  const generateYtDlpCommand = () => {
+    if (!metadata) return '';
+    
+    let args = '';
+    switch (quality) {
+      case VideoQuality.Q4K:
+        args = '-f "bv*[height<=2160]+ba/b" --merge-output-format mp4';
+        break;
+      case VideoQuality.Q1080:
+        args = '-f "bv*[height<=1080]+ba/b" --merge-output-format mp4';
+        break;
+      case VideoQuality.Q720:
+        args = '-f "bv*[height<=720]+ba/b" --merge-output-format mp4';
+        break;
+      case VideoQuality.Q480:
+        args = '-f "bv*[height<=480]+ba/b" --merge-output-format mp4';
+        break;
+      case VideoQuality.AUDIO:
+        args = '-x --audio-format mp3 --audio-quality 0';
+        break;
+    }
+
+    return `yt-dlp ${args} "${metadata.url}"`;
+  };
+
+  const handleCopyCommand = () => {
+    const cmd = generateYtDlpCommand();
+    if (cmd) {
+      navigator.clipboard.writeText(cmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const handleDownload = async () => {
@@ -202,9 +237,8 @@ export default function App() {
     }
 
     if (!success) {
-      addLog(`[fatal] All ${COBALT_INSTANCES.length} nodes failed.`, 'error');
-      addLog(`[help] Try selecting '720p' or 'Audio Only' manually, or wait a moment.`, 'info');
-      setAppState(AppState.ERROR);
+      addLog(`[fatal] All cloud nodes exhausted. Engaging Direct Protocol.`, 'error');
+      setAppState(AppState.CLI_FALLBACK);
       setProgress(0);
     }
   };
@@ -267,6 +301,7 @@ export default function App() {
             <VideoCard data={metadata} />
 
             {/* Action Bar */}
+            {appState !== AppState.CLI_FALLBACK ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-2 flex items-center gap-2">
                 {Object.values(VideoQuality).map((q) => (
@@ -317,6 +352,40 @@ export default function App() {
                 )}
               </button>
             </div>
+            ) : (
+              /* CLI Fallback UI */
+              <div className="bg-slate-900 border border-amber-900/50 rounded-xl p-6 animate-fade-in">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-amber-900/20 rounded-lg">
+                     <Terminal className="w-6 h-6 text-amber-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-amber-100">Direct Execution Protocol</h3>
+                    <p className="text-sm text-amber-400/80">Cloud swarm depleted. Bypass via local terminal.</p>
+                  </div>
+                </div>
+                
+                <div className="bg-black/50 rounded-lg p-4 border border-slate-800 font-mono text-sm relative group">
+                    <div className="text-slate-300 break-all pr-10">
+                        <span className="text-emerald-400 font-bold">yt-dlp</span> {generateYtDlpCommand().replace('yt-dlp ', '')}
+                    </div>
+                    <button 
+                        onClick={handleCopyCommand}
+                        className="absolute top-2 right-2 p-2 bg-slate-800/50 hover:bg-slate-700 rounded-md text-slate-400 hover:text-white transition-colors"
+                    >
+                        {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                </div>
+                
+                <div className="mt-4 flex gap-3 text-xs text-slate-500 items-center">
+                    <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                    <p>Requires <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noreferrer" className="underline hover:text-brand-400">yt-dlp</a> and <a href="https://ffmpeg.org/" target="_blank" rel="noreferrer" className="underline hover:text-brand-400">ffmpeg</a> installed locally.</p>
+                    <button onClick={reset} className="ml-auto hover:text-slate-300 transition-colors">
+                      Reset Interface
+                    </button>
+                </div>
+              </div>
+            )}
 
             {/* Terminal Output */}
             <div className="space-y-2">
@@ -338,8 +407,8 @@ export default function App() {
              <span>Powered by Cobalt Swarm (Auto-Failover)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-            <span>Swarm Active</span>
+            <div className={`w-2 h-2 rounded-full ${appState === AppState.CLI_FALLBACK ? 'bg-amber-500' : 'bg-emerald-500'} animate-pulse`}></div>
+            <span>{appState === AppState.CLI_FALLBACK ? 'Swarm Bypass' : 'Swarm Active'}</span>
           </div>
         </div>
 
