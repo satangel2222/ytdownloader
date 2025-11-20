@@ -1,17 +1,29 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Header } from './components/Header';
 import { VideoCard } from './components/VideoCard';
 import { TerminalLog } from './components/TerminalLog';
 import { analyzeVideoContent } from './services/geminiService';
 import { VideoMetadata, VideoQuality, LogEntry, AppState } from './types';
-import { Download, Search, AlertTriangle, Loader2, Film, Server } from 'lucide-react';
+import { Download, Search, Loader2, Film, Server, AlertCircle } from 'lucide-react';
 
-// List of public Cobalt instances to try for better reliability
+// Expanded list of public Cobalt instances (Mixed regions for better availability)
 const COBALT_INSTANCES = [
-  'https://api.cobalt.tools/api/json',
+  'https://api.download.ax/api/json',            // Strong alternative
+  'https://cobalt.j22.dev/api/json',
+  'https://api.cobalt.tools/api/json',           // Official (High traffic)
+  'https://cobalt.kwiatekmiki.pl/api/json',
+  'https://cobalt.xy24.eu/api/json',
+  'https://cobalt.kanzen.click/api/json',
+  'https://cobalt.synn.cc/api/json',
+  'https://cobalt.typings.dev/api/json',
+  'https://cobalt.smartcode.rs/api/json',
   'https://cobalt.154.53.53.53.sslip.io/api/json',
-  'https://api.server.cobalt.tools/api/json', 
-  'https://cobalt.q1n.net/api/json'
+  'https://cobalt.q1n.net/api/json',
+  'https://api.server.cobalt.tools/api/json',
+  'https://dl.khub.ky/api/json',
+  'https://cobalt.arms.nu/api/json',
+  'https://cobalt.ethan.link/api/json',
+  'https://cobalt.my.to/api/json'
 ];
 
 export default function App() {
@@ -48,7 +60,6 @@ export default function App() {
     addLog(`Connecting to Public Metadata API...`, 'info');
     addLog(`Resolving video ID: ${videoId}`, 'info');
     
-    // Simulate network delay
     await new Promise(r => setTimeout(r, 500));
     
     const thumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
@@ -74,56 +85,105 @@ export default function App() {
     setAppState(AppState.DOWNLOADING);
     setProgress(10);
     addLog(`[init] Initializing download sequence for ID: ${metadata.id}`, 'info');
+    addLog(`[cfg] Target Quality: ${quality}`, 'info');
     
     let success = false;
 
-    // Iterate through available instances until one works
-    for (const instance of COBALT_INSTANCES) {
+    // Shuffle instances to distribute load
+    const shuffledInstances = [...COBALT_INSTANCES].sort(() => 0.5 - Math.random());
+
+    addLog(`[net] Resolved ${shuffledInstances.length} candidate nodes.`, 'info');
+
+    // Helper to perform fetch with specific config
+    const tryFetch = async (instanceUrl: string, useSafeMode: boolean) => {
+        const requestBody = {
+            url: metadata.url,
+            // Safe Mode forces 720p which is more likely to be cached/direct
+            vQuality: useSafeMode ? '720' : (quality === VideoQuality.Q4K ? 'max' : 
+                      quality === VideoQuality.Q1080 ? '1080' : 
+                      quality === VideoQuality.Q720 ? '720' : '480'),
+            aFormat: 'mp3',
+            filenameStyle: 'basic',
+            isAudioOnly: quality === VideoQuality.AUDIO,
+            disableMetadata: useSafeMode // stripping metadata can sometimes help
+        };
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout per request
+
+        try {
+            const response = await fetch(instanceUrl, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            return response;
+        } catch (e) {
+            clearTimeout(timeoutId);
+            throw e;
+        }
+    };
+
+    // Iterate through available instances
+    for (const instance of shuffledInstances) {
       if (success) break;
 
-      const instanceHostname = new URL(instance).hostname;
+      let instanceHostname = 'unknown';
+      try {
+        instanceHostname = new URL(instance).hostname;
+      } catch (e) {
+        continue; 
+      }
 
       try {
         addLog(`[api] Negotiating with ${instanceHostname}...`, 'warning');
         
-        const response = await fetch(instance, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            url: metadata.url,
-            vCodec: 'h264',
-            vQuality: quality === VideoQuality.Q4K ? 'max' : 
-                      quality === VideoQuality.Q1080 ? '1080' : 
-                      quality === VideoQuality.Q720 ? '720' : '480',
-            aFormat: 'mp3',
-            filenamePattern: 'basic',
-            isAudioOnly: quality === VideoQuality.AUDIO
-          })
-        });
+        // Attempt 1: Primary Config (User Selected)
+        let response = await tryFetch(instance, false);
+        let usedSafeMode = false;
+
+        // If primary fails (but network is ok), try Safe Mode immediately on same node
+        if (!response.ok && quality !== VideoQuality.AUDIO && quality !== VideoQuality.Q480) {
+             addLog(`[api] Preferred quality failed on ${instanceHostname}. Retrying Safe Mode...`, 'warning');
+             try {
+                const safeResponse = await tryFetch(instance, true);
+                if (safeResponse.ok) {
+                    response = safeResponse;
+                    usedSafeMode = true;
+                }
+             } catch (e) {
+                // safe mode failed too, continue loop
+             }
+        }
 
         if (!response.ok) {
-          addLog(`[api] ${instanceHostname} returned status ${response.status}. Trying next...`, 'warning');
-          continue; // Try next instance
+          continue; 
         }
 
         const data = await response.json();
 
-        if (data.status === 'error' || !data.url) {
-           addLog(`[api] ${instanceHostname} error: ${data.text || 'No URL returned'}`, 'warning');
-           continue; // Try next instance
+        if (data.status === 'error' || (!data.url && !data.pickle)) {
+           continue; 
         }
 
-        // If we get here, we have success
+        const downloadUrl = data.url || data.pickle;
+
+        if (!downloadUrl) {
+          continue;
+        }
+
+        // Success
         setProgress(80);
-        addLog(`[success] Stream URL resolved via ${instanceHostname}`, 'success');
+        addLog(`[success] Tunnel established via ${instanceHostname} ${usedSafeMode ? '(Safe Mode)' : ''}`, 'success');
         addLog(`[io] Starting transfer...`, 'info');
 
-        // Trigger download
         const link = document.createElement('a');
-        link.href = data.url;
+        link.href = downloadUrl;
         link.target = '_blank';
         link.setAttribute('download', '');
         document.body.appendChild(link);
@@ -136,14 +196,14 @@ export default function App() {
         setAppState(AppState.COMPLETED);
 
       } catch (error: any) {
-        console.warn(`Failed to connect to ${instance}:`, error);
-        addLog(`[net] Connection to ${instanceHostname} failed.`, 'warning');
-        // Continue to next instance
+        // Network errors, CORS errors, timeouts -> continue to next node
+        continue;
       }
     }
 
     if (!success) {
-      addLog(`[fatal] All API instances failed. Please try again later.`, 'error');
+      addLog(`[fatal] All ${COBALT_INSTANCES.length} nodes failed.`, 'error');
+      addLog(`[help] Try selecting '720p' or 'Audio Only' manually, or wait a moment.`, 'info');
       setAppState(AppState.ERROR);
       setProgress(0);
     }
@@ -246,7 +306,8 @@ export default function App() {
                   </>
                 ) : appState === AppState.ERROR ? (
                   <>
-                    Retry
+                    <AlertCircle className="w-5 h-5" />
+                    Retry Download
                   </>
                 ) : (
                   <>
@@ -274,11 +335,11 @@ export default function App() {
         <div className="mt-12 p-4 rounded-lg bg-slate-900/50 border border-slate-800 flex items-center justify-between text-xs text-slate-500">
           <div className="flex items-center gap-2">
              <Server className="w-4 h-4 text-brand-500" />
-             <span>Powered by Cobalt API Network</span>
+             <span>Powered by Cobalt Swarm (Auto-Failover)</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-            <span>System Operational</span>
+            <span>Swarm Active</span>
           </div>
         </div>
 
