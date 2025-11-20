@@ -4,13 +4,13 @@ import { VideoCard } from './components/VideoCard';
 import { TerminalLog } from './components/TerminalLog';
 import { analyzeVideoContent } from './services/geminiService';
 import { VideoMetadata, VideoQuality, LogEntry, AppState } from './types';
-import { Download, Search, Loader2, Film, Server, AlertCircle, Terminal, Copy, Check, CloudLightning, Zap, Shield, Laptop } from 'lucide-react';
+import { Download, Search, Loader2, Film, Server, AlertCircle, Terminal, Copy, Check, CloudLightning, Shield, Laptop, Settings, Network } from 'lucide-react';
 
-// Expanded list of public Cobalt instances (Mixed regions for better availability)
+// Expanded list of public Cobalt instances
 const COBALT_INSTANCES = [
-  'https://api.download.ax/api/json',            // Strong alternative
+  'https://api.download.ax/api/json',
   'https://cobalt.j22.dev/api/json',
-  'https://api.cobalt.tools/api/json',           // Official (High traffic)
+  'https://api.cobalt.tools/api/json',
   'https://cobalt.kwiatekmiki.pl/api/json',
   'https://cobalt.xy24.eu/api/json',
   'https://cobalt.kanzen.click/api/json',
@@ -26,6 +26,8 @@ const COBALT_INSTANCES = [
   'https://cobalt.my.to/api/json'
 ];
 
+type DownloadMode = 'swarm' | 'bridge' | 'cli';
+
 export default function App() {
   const [url, setUrl] = useState('');
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
@@ -34,7 +36,12 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState(0);
   const [copied, setCopied] = useState(false);
-  const [downloadMode, setDownloadMode] = useState<'swarm' | 'cli'>('swarm');
+  
+  // Settings
+  const [downloadMode, setDownloadMode] = useState<DownloadMode>('swarm');
+  // Default to localhost for the bridge
+  const [bridgeUrl, setBridgeUrl] = useState('http://localhost:3000/download');
+  const [showSettings, setShowSettings] = useState(false);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const now = new Date();
@@ -118,17 +125,89 @@ export default function App() {
   const handleCliGeneration = async () => {
     if (!metadata) return;
     
-    // Instant switching to CLI mode - No network requests
     setLogs([]);
     addLog('[sys] Swarm network bypassed.', 'warning');
     addLog('[sys] Native CLI Mode engaged.', 'info');
     addLog(`[cfg] Target Quality: ${quality}`, 'info');
     addLog('[cli] Generating optimized arguments...', 'info');
     
-    await new Promise(r => setTimeout(r, 600)); // Small delay for UX feel
+    await new Promise(r => setTimeout(r, 600));
     
     addLog('[cli] Command construction complete.', 'success');
     setAppState(AppState.CLI_FALLBACK);
+  };
+
+  const handleBridgeDownload = async () => {
+    if (!metadata) return;
+
+    setAppState(AppState.DOWNLOADING);
+    setProgress(20);
+    setLogs([]);
+    addLog(`[init] Engaging Server Bridge Protocol...`, 'info');
+    addLog(`[cfg] Target Endpoint: ${bridgeUrl}`, 'info');
+
+    try {
+        addLog(`[net] Establishing secure tunnel to backend...`, 'warning');
+        
+        const controller = new AbortController();
+        // Longer timeout for server processing
+        const timeoutId = setTimeout(() => controller.abort(), 300000); 
+
+        try {
+            const response = await fetch(bridgeUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: metadata.url,
+                    quality: quality
+                }),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Server Error: ${response.status} - ${errorText}`);
+            }
+            
+            addLog(`[success] Stream acquired from bridge.`, 'success');
+            addLog(`[io] Downloading data...`, 'info');
+
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            // Try to get filename from headers if available, else fallback
+            const disposition = response.headers.get('Content-Disposition');
+            let filename = `video-${metadata.id}.mp4`;
+            if (disposition && disposition.indexOf('attachment') !== -1) {
+                const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                const matches = filenameRegex.exec(disposition);
+                if (matches != null && matches[1]) { 
+                  filename = matches[1].replace(/['"]/g, '');
+                }
+            }
+            
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            setAppState(AppState.COMPLETED);
+            setProgress(100);
+
+        } catch (networkError: any) {
+             clearTimeout(timeoutId);
+             throw new Error(networkError.message || 'Connection failed');
+        }
+
+    } catch (error: any) {
+        addLog(`[fatal] Bridge connection failed: ${error.message}`, 'error');
+        addLog(`[help] 1. Ensure 'node server.js' is running on your computer.`, 'warning');
+        addLog(`[help] 2. Ensure Bridge URL is set to http://localhost:3000/download`, 'info');
+        setAppState(AppState.ERROR);
+    }
   };
 
   const handleSwarmDownload = async () => {
@@ -136,12 +215,11 @@ export default function App() {
 
     setAppState(AppState.DOWNLOADING);
     setProgress(10);
+    setLogs([]); // Clear logs for fresh run
     addLog(`[init] Initializing download sequence for ID: ${metadata.id}`, 'info');
     addLog(`[cfg] Target Quality: ${quality}`, 'info');
     
     let success = false;
-
-    // Shuffle instances to distribute load
     const shuffledInstances = [...COBALT_INSTANCES].sort(() => 0.5 - Math.random());
 
     addLog(`[net] Resolved ${shuffledInstances.length} candidate nodes.`, 'info');
@@ -159,15 +237,12 @@ export default function App() {
         };
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // Shortened timeout
 
         try {
             const response = await fetch(instanceUrl, {
                 method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody),
                 signal: controller.signal
             });
@@ -181,42 +256,22 @@ export default function App() {
 
     for (const instance of shuffledInstances) {
       if (success) break;
-
-      let instanceHostname = 'unknown';
-      try {
-        instanceHostname = new URL(instance).hostname;
-      } catch (e) {
-        continue; 
-      }
+      let instanceHostname = new URL(instance).hostname;
 
       try {
         addLog(`[api] Negotiating with ${instanceHostname}...`, 'warning');
-        
         let response = await tryFetch(instance, false);
-        let usedSafeMode = false;
-
-        if (!response.ok && quality !== VideoQuality.AUDIO && quality !== VideoQuality.Q480) {
-             addLog(`[api] Preferred quality failed on ${instanceHostname}. Retrying Safe Mode...`, 'warning');
-             try {
-                const safeResponse = await tryFetch(instance, true);
-                if (safeResponse.ok) {
-                    response = safeResponse;
-                    usedSafeMode = true;
-                }
-             } catch (e) { }
-        }
-
+        
         if (!response.ok) continue; 
 
         const data = await response.json();
-
         if (data.status === 'error' || (!data.url && !data.pickle)) continue; 
 
         const downloadUrl = data.url || data.pickle;
         if (!downloadUrl) continue;
 
         setProgress(80);
-        addLog(`[success] Tunnel established via ${instanceHostname} ${usedSafeMode ? '(Safe Mode)' : ''}`, 'success');
+        addLog(`[success] Tunnel established via ${instanceHostname}`, 'success');
         addLog(`[io] Starting transfer...`, 'info');
 
         const link = document.createElement('a');
@@ -238,8 +293,9 @@ export default function App() {
     }
 
     if (!success) {
-      addLog(`[fatal] All cloud nodes exhausted. Engaging Recovery Console.`, 'error');
-      setAppState(AppState.CLI_FALLBACK);
+      addLog(`[fatal] All cloud nodes exhausted.`, 'error');
+      addLog(`[tip] Try switching to 'Server Bridge' or 'Native CLI' mode.`, 'info');
+      setAppState(AppState.ERROR);
       setProgress(0);
     }
   };
@@ -247,6 +303,8 @@ export default function App() {
   const handleDownload = () => {
     if (downloadMode === 'cli') {
         handleCliGeneration();
+    } else if (downloadMode === 'bridge') {
+        handleBridgeDownload();
     } else {
         handleSwarmDownload();
     }
@@ -258,7 +316,7 @@ export default function App() {
     setLogs([]);
     setUrl('');
     setProgress(0);
-    setDownloadMode('swarm');
+    // Keep downloadMode persistent
   };
 
   return (
@@ -315,49 +373,105 @@ export default function App() {
             <div className="space-y-4">
               
               {/* Controls Row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-4">
                   
-                  {/* Quality Selector */}
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 flex items-center gap-2 overflow-x-auto scrollbar-hide">
-                    {Object.values(VideoQuality).map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => setQuality(q)}
-                        className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg whitespace-nowrap transition-colors ${
-                          quality === q
-                            ? 'bg-slate-800 text-white shadow-sm border border-slate-700'
-                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                        }`}
+                  <div className="flex gap-4 flex-col md:flex-row">
+                      {/* Quality Selector */}
+                      <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-2 flex items-center gap-2 overflow-x-auto scrollbar-hide">
+                        {Object.values(VideoQuality).map((q) => (
+                          <button
+                            key={q}
+                            onClick={() => setQuality(q)}
+                            className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg whitespace-nowrap transition-colors ${
+                              quality === q
+                                ? 'bg-slate-800 text-white shadow-sm border border-slate-700'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                            }`}
+                          >
+                            {q.split(' ')[0]}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Settings Toggle */}
+                      <button 
+                        onClick={() => setShowSettings(!showSettings)}
+                        className={`p-3 rounded-xl border transition-colors ${showSettings ? 'bg-slate-800 border-slate-600 text-white' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'}`}
                       >
-                        {q.split(' ')[0]}
+                        <Settings className="w-6 h-6" />
                       </button>
-                    ))}
                   </div>
 
-                  {/* Mode Selector */}
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 flex items-center gap-2">
-                      <button
-                        onClick={() => setDownloadMode('swarm')}
-                        className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
-                          downloadMode === 'swarm'
-                            ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/50'
-                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <CloudLightning className="w-4 h-4" />
-                        Swarm API
-                      </button>
-                      <button
-                        onClick={() => setDownloadMode('cli')}
-                        className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
-                          downloadMode === 'cli'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/50'
-                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <Laptop className="w-4 h-4" />
-                        Native CLI
-                      </button>
+                  {/* Mode Selector & Settings */}
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                      <div className="p-2 flex items-center gap-2">
+                          <button
+                            onClick={() => setDownloadMode('swarm')}
+                            className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                              downloadMode === 'swarm'
+                                ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/50'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                            }`}
+                          >
+                            <CloudLightning className="w-4 h-4" />
+                            Swarm
+                          </button>
+                          <button
+                            onClick={() => setDownloadMode('bridge')}
+                            className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                              downloadMode === 'bridge'
+                                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/50'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                            }`}
+                          >
+                            <Network className="w-4 h-4" />
+                            Server Bridge
+                          </button>
+                          <button
+                            onClick={() => setDownloadMode('cli')}
+                            className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                              downloadMode === 'cli'
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/50'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                            }`}
+                          >
+                            <Laptop className="w-4 h-4" />
+                            Native CLI
+                          </button>
+                      </div>
+
+                      {/* Extended Settings Panel */}
+                      {(showSettings || downloadMode === 'bridge') && (
+                        <div className="px-4 pb-4 pt-2 border-t border-slate-800 animate-fade-in">
+                            {downloadMode === 'bridge' && (
+                                <div className="space-y-2">
+                                    <label className="text-xs text-amber-400 font-medium uppercase tracking-wider flex items-center gap-2">
+                                        <Server className="w-3 h-3" /> Backend Endpoint
+                                    </label>
+                                    <input 
+                                        type="text" 
+                                        value={bridgeUrl}
+                                        onChange={(e) => setBridgeUrl(e.target.value)}
+                                        className="w-full bg-black/30 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 focus:border-amber-500 focus:outline-none font-mono"
+                                        placeholder="http://localhost:3000/download"
+                                    />
+                                    <p className="text-xs text-slate-500">
+                                        Must be running locally: <code className="bg-slate-800 px-1 py-0.5 rounded text-slate-300">node server.js</code>
+                                    </p>
+                                </div>
+                            )}
+                            {downloadMode === 'swarm' && (
+                                <p className="text-xs text-slate-500">
+                                    Swarm mode uses public community APIs. Availability is not guaranteed.
+                                </p>
+                            )}
+                             {downloadMode === 'cli' && (
+                                <p className="text-xs text-slate-500">
+                                    CLI mode generates commands for you to run in your local terminal.
+                                </p>
+                            )}
+                        </div>
+                      )}
                   </div>
               </div>
 
@@ -372,13 +486,15 @@ export default function App() {
                           ? 'bg-red-600 hover:bg-red-500 text-white'
                           : downloadMode === 'cli' 
                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white' 
-                             : 'bg-white text-slate-900 hover:bg-brand-50'
+                             : downloadMode === 'bridge'
+                               ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                               : 'bg-white text-slate-900 hover:bg-brand-50'
                     }`}
                   >
                     {appState === AppState.DOWNLOADING ? (
                       <>
                         <Loader2 className="w-6 h-6 animate-spin" />
-                        {downloadMode === 'cli' ? 'Generating...' : 'Fetching...'}
+                        {downloadMode === 'cli' ? 'Generating...' : downloadMode === 'bridge' ? 'Streaming...' : 'Fetching...'}
                       </>
                     ) : appState === AppState.COMPLETED ? (
                       <>
@@ -391,8 +507,8 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        {downloadMode === 'cli' ? <Terminal className="w-6 h-6" /> : <Download className="w-6 h-6" />}
-                        {downloadMode === 'cli' ? 'Generate Command' : 'Start Download'}
+                        {downloadMode === 'cli' ? <Terminal className="w-6 h-6" /> : downloadMode === 'bridge' ? <Network className="w-6 h-6" /> : <Download className="w-6 h-6" />}
+                        {downloadMode === 'cli' ? 'Generate Command' : downloadMode === 'bridge' ? 'Connect & Download' : 'Start Download'}
                       </>
                     )}
                   </button>
@@ -469,12 +585,12 @@ export default function App() {
           <div className="flex items-center gap-2">
              <Server className="w-4 h-4 text-slate-600" />
              <span>
-               {downloadMode === 'cli' ? 'Local Environment (Native)' : 'Cobalt Swarm (Cloud API)'}
+               {downloadMode === 'cli' ? 'Local Environment (Native)' : downloadMode === 'bridge' ? 'Custom Server (Bridge)' : 'Cobalt Swarm (Cloud API)'}
              </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${appState === AppState.CLI_FALLBACK ? 'bg-emerald-500' : 'bg-brand-500'} animate-pulse`}></div>
-            <span>{appState === AppState.CLI_FALLBACK ? 'Terminal Active' : 'Online'}</span>
+            <div className={`w-2 h-2 rounded-full ${appState === AppState.CLI_FALLBACK ? 'bg-emerald-500' : appState === AppState.ERROR ? 'bg-red-500' : 'bg-brand-500'} animate-pulse`}></div>
+            <span>{appState === AppState.CLI_FALLBACK ? 'Terminal Active' : appState === AppState.ERROR ? 'System Halt' : 'Online'}</span>
           </div>
         </div>
 
