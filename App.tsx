@@ -6,6 +6,14 @@ import { analyzeVideoContent } from './services/geminiService';
 import { VideoMetadata, VideoQuality, LogEntry, AppState } from './types';
 import { Download, Search, AlertTriangle, Loader2, Film, Server } from 'lucide-react';
 
+// List of public Cobalt instances to try for better reliability
+const COBALT_INSTANCES = [
+  'https://api.cobalt.tools/api/json',
+  'https://cobalt.154.53.53.53.sslip.io/api/json',
+  'https://api.server.cobalt.tools/api/json', 
+  'https://cobalt.q1n.net/api/json'
+];
+
 export default function App() {
   const [url, setUrl] = useState('');
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
@@ -67,63 +75,75 @@ export default function App() {
     setProgress(10);
     addLog(`[init] Initializing download sequence for ID: ${metadata.id}`, 'info');
     
-    try {
-      addLog(`[api] Negotiating with Cobalt instance...`, 'warning');
-      
-      // We use a public Cobalt instance. 
-      // In production, you might want to host your own or rotate instances.
-      const response = await fetch('https://api.cobalt.tools/api/json', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: metadata.url,
-          vCodec: 'h264',
-          vQuality: quality === VideoQuality.Q4K ? 'max' : 
-                    quality === VideoQuality.Q1080 ? '1080' : 
-                    quality === VideoQuality.Q720 ? '720' : '480',
-          aFormat: 'mp3',
-          filenamePattern: 'basic',
-          isAudioOnly: quality === VideoQuality.AUDIO
-        })
-      });
+    let success = false;
 
-      setProgress(40);
-      
-      if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
+    // Iterate through available instances until one works
+    for (const instance of COBALT_INSTANCES) {
+      if (success) break;
+
+      const instanceHostname = new URL(instance).hostname;
+
+      try {
+        addLog(`[api] Negotiating with ${instanceHostname}...`, 'warning');
+        
+        const response = await fetch(instance, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            url: metadata.url,
+            vCodec: 'h264',
+            vQuality: quality === VideoQuality.Q4K ? 'max' : 
+                      quality === VideoQuality.Q1080 ? '1080' : 
+                      quality === VideoQuality.Q720 ? '720' : '480',
+            aFormat: 'mp3',
+            filenamePattern: 'basic',
+            isAudioOnly: quality === VideoQuality.AUDIO
+          })
+        });
+
+        if (!response.ok) {
+          addLog(`[api] ${instanceHostname} returned status ${response.status}. Trying next...`, 'warning');
+          continue; // Try next instance
+        }
+
+        const data = await response.json();
+
+        if (data.status === 'error' || !data.url) {
+           addLog(`[api] ${instanceHostname} error: ${data.text || 'No URL returned'}`, 'warning');
+           continue; // Try next instance
+        }
+
+        // If we get here, we have success
+        setProgress(80);
+        addLog(`[success] Stream URL resolved via ${instanceHostname}`, 'success');
+        addLog(`[io] Starting transfer...`, 'info');
+
+        // Trigger download
+        const link = document.createElement('a');
+        link.href = data.url;
+        link.target = '_blank';
+        link.setAttribute('download', '');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        success = true;
+        setProgress(100);
+        addLog(`[done] File handover to browser download manager`, 'success');
+        setAppState(AppState.COMPLETED);
+
+      } catch (error: any) {
+        console.warn(`Failed to connect to ${instance}:`, error);
+        addLog(`[net] Connection to ${instanceHostname} failed.`, 'warning');
+        // Continue to next instance
       }
+    }
 
-      const data = await response.json();
-      addLog(`[api] Response received: ${data.status}`, 'info');
-
-      if (data.status === 'error' || !data.url) {
-         throw new Error(data.text || 'Failed to retrieve download link');
-      }
-
-      setProgress(80);
-      addLog(`[success] Stream URL resolved successfully`, 'success');
-      addLog(`[io] Starting transfer...`, 'info');
-
-      // Trigger download
-      const link = document.createElement('a');
-      link.href = data.url;
-      link.target = '_blank';
-      link.setAttribute('download', ''); // Attempt to trigger download
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      setProgress(100);
-      addLog(`[done] File handover to browser download manager`, 'success');
-      setAppState(AppState.COMPLETED);
-
-    } catch (error: any) {
-      console.error(error);
-      addLog(`[error] ${error.message}`, 'error');
-      addLog(`[fatal] Operation aborted`, 'error');
+    if (!success) {
+      addLog(`[fatal] All API instances failed. Please try again later.`, 'error');
       setAppState(AppState.ERROR);
       setProgress(0);
     }
