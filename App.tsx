@@ -4,7 +4,7 @@ import { VideoCard } from './components/VideoCard';
 import { TerminalLog } from './components/TerminalLog';
 import { analyzeVideoContent } from './services/geminiService';
 import { VideoMetadata, VideoQuality, LogEntry, AppState } from './types';
-import { Download, Search, Loader2, Film, Server, AlertCircle, Terminal, Copy, Check, CloudLightning, AlertTriangle, Zap, Shield } from 'lucide-react';
+import { Download, Search, Loader2, Film, Server, AlertCircle, Terminal, Copy, Check, CloudLightning, Zap, Shield, Laptop } from 'lucide-react';
 
 // Expanded list of public Cobalt instances (Mixed regions for better availability)
 const COBALT_INSTANCES = [
@@ -34,8 +34,7 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState(0);
   const [copied, setCopied] = useState(false);
-  const [directLoading, setDirectLoading] = useState(false);
-  const [downloadMode, setDownloadMode] = useState<'swarm' | 'direct'>('swarm');
+  const [downloadMode, setDownloadMode] = useState<'swarm' | 'cli'>('swarm');
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const now = new Date();
@@ -116,50 +115,20 @@ export default function App() {
     }
   };
 
-  // Renamed from handleEmergencyDownload to handleDirectDownload
-  const handleDirectDownload = async () => {
+  const handleCliGeneration = async () => {
     if (!metadata) return;
     
-    if (appState !== AppState.CLI_FALLBACK) {
-      setAppState(AppState.DOWNLOADING);
-      setLogs([]); // Clear logs if starting fresh
-    }
+    // Instant switching to CLI mode - No network requests
+    setLogs([]);
+    addLog('[sys] Swarm network bypassed.', 'warning');
+    addLog('[sys] Native CLI Mode engaged.', 'info');
+    addLog(`[cfg] Target Quality: ${quality}`, 'info');
+    addLog('[cli] Generating optimized arguments...', 'info');
     
-    setDirectLoading(true);
-    addLog('[direct] Initializing Direct Stream Protocol...', 'info');
-    addLog('[direct] Allocating server-side worker node...', 'warning');
+    await new Promise(r => setTimeout(r, 600)); // Small delay for UX feel
     
-    // Hypothetical backend worker for direct streaming.
-    const WORKER_ENDPOINT = 'https://worker.tubeforge.live/v1/stream'; 
-
-    try {
-      // Simulate network negotiation
-      await new Promise(r => setTimeout(r, 1500));
-
-      addLog(`[direct] Requesting stream from ${WORKER_ENDPOINT}...`, 'info');
-      
-      // In a real app, this would fetch the stream
-      // const response = await fetch(`${WORKER_ENDPOINT}?url=${encodeURIComponent(metadata.url)}&quality=${quality}`);
-      // if (!response.ok) throw new Error('Relay connection refused');
-
-      // Simulating a delay for the "Download" to start
-      await new Promise(r => setTimeout(r, 1000));
-      
-      // Since we don't have a real backend, we'll simulate the "Stream Ready" state
-      // and fallback to the CLI message if the fetch fails (which it will in this demo)
-      
-      // For demo purposes, we'll throw to show the robustness of the fallback even in Direct Mode
-      // OR, we can pretend it worked if we had a valid link. 
-      // Let's assume the "Direct" endpoint is also unstable in this demo environment and show the CLI.
-      throw new Error("Direct stream worker busy. Switching to Command Generation.");
-
-    } catch (e: any) {
-      addLog(`[error] ${e.message || 'Stream failed'}`, 'error');
-      addLog('[info] Engaging Manual Override Protocol.', 'info');
-      setAppState(AppState.CLI_FALLBACK);
-    } finally {
-      setDirectLoading(false);
-    }
+    addLog('[cli] Command construction complete.', 'success');
+    setAppState(AppState.CLI_FALLBACK);
   };
 
   const handleSwarmDownload = async () => {
@@ -276,8 +245,8 @@ export default function App() {
   };
 
   const handleDownload = () => {
-    if (downloadMode === 'direct') {
-        handleDirectDownload();
+    if (downloadMode === 'cli') {
+        handleCliGeneration();
     } else {
         handleSwarmDownload();
     }
@@ -289,7 +258,6 @@ export default function App() {
     setLogs([]);
     setUrl('');
     setProgress(0);
-    setDirectLoading(false);
     setDownloadMode('swarm');
   };
 
@@ -380,15 +348,15 @@ export default function App() {
                         Swarm API
                       </button>
                       <button
-                        onClick={() => setDownloadMode('direct')}
+                        onClick={() => setDownloadMode('cli')}
                         className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
-                          downloadMode === 'direct'
-                            ? 'bg-brand-500/10 text-brand-400 border border-brand-500/50'
+                          downloadMode === 'cli'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/50'
                             : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
                         }`}
                       >
-                        <Zap className="w-4 h-4" />
-                        Direct Stream
+                        <Laptop className="w-4 h-4" />
+                        Native CLI
                       </button>
                   </div>
               </div>
@@ -402,15 +370,15 @@ export default function App() {
                         ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                         : appState === AppState.ERROR 
                           ? 'bg-red-600 hover:bg-red-500 text-white'
-                          : downloadMode === 'direct' 
-                             ? 'bg-brand-600 hover:bg-brand-500 text-white' 
+                          : downloadMode === 'cli' 
+                             ? 'bg-emerald-600 hover:bg-emerald-500 text-white' 
                              : 'bg-white text-slate-900 hover:bg-brand-50'
                     }`}
                   >
                     {appState === AppState.DOWNLOADING ? (
                       <>
                         <Loader2 className="w-6 h-6 animate-spin" />
-                        {downloadMode === 'direct' ? 'Streaming...' : 'Fetching...'}
+                        {downloadMode === 'cli' ? 'Generating...' : 'Fetching...'}
                       </>
                     ) : appState === AppState.COMPLETED ? (
                       <>
@@ -423,81 +391,59 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        {downloadMode === 'direct' ? <Zap className="w-6 h-6" /> : <Download className="w-6 h-6" />}
-                        {downloadMode === 'direct' ? 'Direct Download' : 'Start Download'}
+                        {downloadMode === 'cli' ? <Terminal className="w-6 h-6" /> : <Download className="w-6 h-6" />}
+                        {downloadMode === 'cli' ? 'Generate Command' : 'Start Download'}
                       </>
                     )}
-                  </button>
-                  
-                  <button 
-                    onClick={() => setAppState(AppState.CLI_FALLBACK)}
-                    className="px-6 rounded-xl border border-slate-700 bg-slate-900 text-slate-400 hover:text-white hover:border-slate-600 transition-colors flex items-center justify-center gap-2"
-                    title="Get CLI Command"
-                  >
-                    <Terminal className="w-5 h-5" />
                   </button>
               </div>
             </div>
             ) : (
-              /* CLI Fallback UI */
-              <div className="bg-slate-900 border border-amber-900/50 rounded-xl p-6 animate-fade-in space-y-6">
+              /* CLI / Native View */
+              <div className="bg-slate-900 border border-emerald-900/50 rounded-xl p-6 animate-fade-in space-y-6">
                 
                 {/* Header */}
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-amber-900/20 rounded-lg">
-                     <Terminal className="w-6 h-6 text-amber-500" />
+                  <div className="p-2 bg-emerald-900/20 rounded-lg">
+                     <Terminal className="w-6 h-6 text-emerald-500" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-amber-100">Terminal & Recovery</h3>
-                    <p className="text-sm text-amber-400/80">Execute downloads directly from your machine or via server proxy.</p>
+                    <h3 className="text-lg font-bold text-emerald-100">Native Command Ready</h3>
+                    <p className="text-sm text-emerald-400/80">
+                      Direct execution bypasses all API limits and server errors.
+                    </p>
                   </div>
                 </div>
 
-                {/* Option 1: Cloud Relay */}
-                <div className="p-4 rounded-lg bg-slate-800/50 border border-slate-700 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 bg-brand-500/10 rounded-lg">
-                            <Zap className="w-5 h-5 text-brand-400" />
-                        </div>
-                        <div>
-                            <h4 className="text-sm font-semibold text-slate-200">Direct Server Stream</h4>
-                            <p className="text-xs text-slate-500">Attempt to stream via backend worker (Bypasses API swarm).</p>
-                        </div>
-                    </div>
-                    <button 
-                        onClick={handleDirectDownload}
-                        disabled={directLoading}
-                        className="w-full md:w-auto px-4 py-2 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-                    >
-                        {directLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                        {directLoading ? 'Streaming...' : 'Start Stream'}
-                    </button>
-                </div>
-                
-                {/* Option 2: CLI Manual */}
+                {/* Command Box */}
                 <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-xs text-slate-400 uppercase tracking-wider font-bold">
-                        <Terminal className="w-3 h-3" />
-                        Local CLI Command (yt-dlp)
-                    </div>
-                    <div className="bg-black/50 rounded-lg p-4 border border-slate-800 font-mono text-sm relative group">
-                        <div className="text-slate-300 break-all pr-10">
+                    <div className="bg-black/80 rounded-lg p-4 border border-slate-700 font-mono text-sm relative group shadow-inner">
+                        <div className="text-slate-300 break-all pr-10 selection:bg-emerald-500/30">
                             <span className="text-emerald-400 font-bold">yt-dlp</span> {generateYtDlpCommand().replace('yt-dlp ', '')}
                         </div>
                         <button 
                             onClick={handleCopyCommand}
-                            className="absolute top-2 right-2 p-2 bg-slate-800/50 hover:bg-slate-700 rounded-md text-slate-400 hover:text-white transition-colors"
+                            className="absolute top-2 right-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-md text-slate-400 hover:text-white transition-colors border border-slate-700 hover:border-slate-600"
                         >
                             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                         </button>
                     </div>
-                    <p className="text-xs text-slate-600">
-                        Paste this into your terminal. 100% success rate, no API dependencies.
-                    </p>
+                </div>
+                
+                {/* Info/Tip */}
+                <div className="bg-slate-800/50 rounded-lg p-4 text-xs text-slate-400 flex gap-3 border border-slate-800/50">
+                    <Shield className="w-10 h-10 text-slate-600 shrink-0" />
+                    <div className="space-y-1">
+                        <p className="font-semibold text-slate-300">Why do I need to run this?</p>
+                        <p>
+                            Web browsers are sandboxed for security and cannot directly execute software like <strong>yt-dlp</strong> on your machine. 
+                            This generated command allows you to run the download securely on your own computer, bypassing all web-based API failures.
+                        </p>
+                    </div>
                 </div>
                 
                 <div className="pt-4 border-t border-slate-800 flex justify-between items-center">
-                    <span className="text-xs text-amber-500/50 font-mono">MODE: MANUAL_OVERRIDE</span>
+                    <span className="text-xs text-emerald-500/50 font-mono">MODE: LOCAL_EXECUTION</span>
                     <button onClick={() => setAppState(AppState.READY)} className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
                       Return to Dashboard
                     </button>
@@ -521,14 +467,14 @@ export default function App() {
         {/* Backend Status */}
         <div className="mt-12 p-4 rounded-lg bg-slate-900/50 border border-slate-800 flex items-center justify-between text-xs text-slate-500">
           <div className="flex items-center gap-2">
-             <Server className="w-4 h-4 text-brand-500" />
+             <Server className="w-4 h-4 text-slate-600" />
              <span>
-               {downloadMode === 'direct' ? 'Direct Server Uplink Active' : 'Cobalt Swarm Active (Auto-Failover)'}
+               {downloadMode === 'cli' ? 'Local Environment (Native)' : 'Cobalt Swarm (Cloud API)'}
              </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${appState === AppState.CLI_FALLBACK ? 'bg-amber-500' : 'bg-emerald-500'} animate-pulse`}></div>
-            <span>{appState === AppState.CLI_FALLBACK ? 'Manual Mode' : 'Online'}</span>
+            <div className={`w-2 h-2 rounded-full ${appState === AppState.CLI_FALLBACK ? 'bg-emerald-500' : 'bg-brand-500'} animate-pulse`}></div>
+            <span>{appState === AppState.CLI_FALLBACK ? 'Terminal Active' : 'Online'}</span>
           </div>
         </div>
 
